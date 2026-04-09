@@ -1,65 +1,261 @@
-import Image from "next/image";
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+import { LeaderboardHeader } from "@/src/components/leaderboard/LeaderboardHeader";
+import { LeaderboardTable } from "@/src/components/leaderboard/LeaderboardTable";
+import { getBrowserSupabaseClient } from "@/src/lib/supabase-browser";
+import type { LeaderboardRow as LeaderboardItem } from "@/src/lib/types";
+
+type RobloxThumbnailResponse = {
+  data?: Array<{
+    targetId: number;
+    state: string;
+    imageUrl?: string;
+  }>;
+};
+
+type ThumbnailCacheEntry = {
+  imageUrl: string;
+  cachedAt: number;
+};
+
+const THUMBNAIL_CACHE_KEY = "roblox-thumbnail-cache-v1";
+const THUMBNAIL_TTL_MS = 24 * 60 * 60 * 1000;
+const THUMBNAIL_BATCH_SIZE = 50;
+
+const formatDate = (iso: string) => {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return date.toLocaleString();
+};
 
 export default function Home() {
+  const [rows, setRows] = useState<LeaderboardItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState("CONNECTING");
+  const [thumbnailCache, setThumbnailCache] = useState<Record<string, ThumbnailCacheEntry>>({});
+
+  const logRealtime = useCallback((message: string, details?: unknown) => {
+    if (details === undefined) {
+      console.log(`[realtime] ${message}`);
+      return;
+    }
+    console.log(`[realtime] ${message}`, details);
+  }, []);
+
+  const loadLeaderboard = useCallback(async (showLoading = true) => {
+    if (showLoading) setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/leaderboard", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("Could not load leaderboard");
+      }
+
+      const data = (await response.json()) as { entries: LeaderboardItem[] };
+      setRows(data.entries ?? []);
+    } catch {
+      setError("Failed to load leaderboard. Try refresh.");
+    } finally {
+      if (showLoading) setIsLoading(false);
+    }
+  }, []);
+
+  const isThumbnailFresh = useCallback((entry: ThumbnailCacheEntry | undefined) => {
+    if (!entry) return false;
+    return Date.now() - entry.cachedAt < THUMBNAIL_TTL_MS;
+  }, []);
+
+  // 1. INITIAL LOAD
+  useEffect(() => {
+    void loadLeaderboard();
+  }, [loadLeaderboard]);
+
+  // 1.5 LOAD THUMBNAIL CACHE
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(THUMBNAIL_CACHE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as Record<string, ThumbnailCacheEntry>;
+      const cleaned: Record<string, ThumbnailCacheEntry> = {};
+
+      for (const [userId, entry] of Object.entries(parsed)) {
+        if (
+          entry &&
+          typeof entry.imageUrl === "string" &&
+          typeof entry.cachedAt === "number" &&
+          Date.now() - entry.cachedAt < THUMBNAIL_TTL_MS
+        ) {
+          cleaned[userId] = entry;
+        }
+      }
+
+      setThumbnailCache(cleaned);
+    } catch {
+      // Ignore invalid local cache data.
+    }
+  }, []);
+
+  // 1.6 SAVE THUMBNAIL CACHE
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(THUMBNAIL_CACHE_KEY, JSON.stringify(thumbnailCache));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [thumbnailCache]);
+
+  // 1.7 FETCH MISSING THUMBNAILS
+  useEffect(() => {
+    const missingUserIds = rows
+      .map((row) => row.user_id)
+      .filter((userId) => /^\d+$/.test(userId))
+      .filter((userId) => !isThumbnailFresh(thumbnailCache[userId]));
+
+    if (missingUserIds.length === 0) return;
+
+    let isCancelled = false;
+
+    const fetchMissingThumbnails = async () => {
+      for (let i = 0; i < missingUserIds.length; i += THUMBNAIL_BATCH_SIZE) {
+        const batch = missingUserIds.slice(i, i + THUMBNAIL_BATCH_SIZE);
+        const url = `/api/roblox-thumbnails?userIds=${batch.join(",")}`;
+
+        try {
+          const response = await fetch(url, { cache: "no-store" });
+          if (!response.ok) continue;
+
+          const payload = (await response.json()) as RobloxThumbnailResponse;
+          const now = Date.now();
+
+          if (isCancelled) return;
+
+          setThumbnailCache((current) => {
+            const next = { ...current };
+
+            for (const item of payload.data ?? []) {
+              if (item.state !== "Completed" || !item.imageUrl) continue;
+              next[String(item.targetId)] = {
+                imageUrl: item.imageUrl,
+                cachedAt: now,
+              };
+            }
+
+            return next;
+          });
+        } catch {
+          // Ignore thumbnail fetch failures and keep rendering without image.
+        }
+      }
+    };
+
+    void fetchMissingThumbnails();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [rows, thumbnailCache, isThumbnailFresh]);
+
+  // 2. REALTIME SUBSCRIPTION (UPDATED)
+  useEffect(() => {
+    logRealtime("Attempting realtime connection");
+    const supabase = getBrowserSupabaseClient();
+
+    if (!supabase) {
+      setIsRealtimeConnected(false);
+      setRealtimeStatus("MISSING_SUPABASE_PUBLIC_ENV");
+      logRealtime("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
+      return;
+    }
+
+    logRealtime("Supabase browser client initialized");
+
+    const channel = supabase
+      .channel("leaderboard-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "leaderboard" },
+        (payload) => {
+          setRealtimeStatus("EVENT_RECEIVED");
+          logRealtime("Updating React State visually", payload.eventType);
+
+          setRows((currentRows) => {
+            if (payload.eventType === "UPDATE") {
+              const updatedRow = payload.new as LeaderboardItem;
+              return currentRows
+                .map((row) => (row.user_id === updatedRow.user_id ? updatedRow : row))
+                .sort((a, b) => b.cups_served - a.cups_served);
+            }
+
+            if (payload.eventType === "INSERT") {
+              const newRow = payload.new as LeaderboardItem;
+              if (currentRows.some((r) => r.user_id === newRow.user_id)) return currentRows;
+              return [...currentRows, newRow].sort((a, b) => b.cups_served - a.cups_served);
+            }
+
+            return currentRows;
+          });
+        }
+      )
+      .subscribe((status) => {
+        setRealtimeStatus(status);
+        setIsRealtimeConnected(status === "SUBSCRIBED");
+        logRealtime(`Channel status changed: ${status}`);
+      });
+
+    return () => {
+      logRealtime("Cleaning up realtime channel");
+      setIsRealtimeConnected(false);
+      void supabase.removeChannel(channel);
+    };
+  }, [logRealtime]);
+
+  // 3. POLLING FALLBACK
+  useEffect(() => {
+    const pollInterval = window.setInterval(() => {
+      if (!isRealtimeConnected) {
+        logRealtime("Realtime not connected, polling /api/leaderboard");
+        void loadLeaderboard(false);
+      }
+    }, 3000);
+
+    return () => {
+      window.clearInterval(pollInterval);
+    };
+  }, [isRealtimeConnected, loadLeaderboard, logRealtime]);
+
+  const resolveThumbnailUrl = useCallback(
+    (userId: string) => thumbnailCache[userId]?.imageUrl,
+    [thumbnailCache],
+  );
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="relative min-h-screen overflow-x-hidden bg-gradient-to-b from-[#f6e9d7] via-[#f8efe4] to-[#efe1d0] px-4 py-10 text-zinc-900 md:px-8">
+      <div className="pointer-events-none absolute -left-16 top-10 h-40 w-40 rounded-full bg-[#d97d46]/20 blur-3xl" />
+      <div className="pointer-events-none absolute right-0 top-1/3 h-48 w-48 rounded-full bg-[#9f5e3f]/15 blur-3xl" />
+
+      <section className="relative mx-auto w-full max-w-5xl rounded-[2rem] border border-[#d7b38d] bg-[#fff8ef]/90 p-6 shadow-[0_18px_50px_rgba(86,52,31,0.18)] backdrop-blur md:p-8">
+        <LeaderboardHeader
+          isRealtimeConnected={isRealtimeConnected}
+          realtimeStatus={realtimeStatus}
+          onRefresh={() => {
+            void loadLeaderboard();
+          }}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+
+        <LeaderboardTable
+          rows={rows}
+          isLoading={isLoading}
+          error={error}
+          resolveThumbnailUrl={resolveThumbnailUrl}
+          formatDate={formatDate}
+        />
+      </section>
+    </main>
   );
 }
