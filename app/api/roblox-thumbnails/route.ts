@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: "No valid userIds provided" }, { status: 400 });
     }
 
-    const robloxUrl = `https://thumbnails.roblox.com/v1/users/avatar?userIds=${userIds.join(",")}&size=180x180&format=Png&isCircular=false`;
+    const robloxUrl = `https://thumbnails.roproxy.com/v1/users/avatar?userIds=${userIds.join(",")}&size=180x180&format=Png&isCircular=false`;
 
     try {
         const response = await fetch(robloxUrl, {
