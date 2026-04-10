@@ -26,9 +26,15 @@ export async function GET(request: NextRequest) {
         const response = await fetch(robloxUrl, {
             method: "GET",
             cache: "no-store",
+            headers: {
+                // Mimic a standard desktop browser to bypass Roblox bot protection
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+                "Accept": "application/json"
+            }
         });
 
         const bodyText = await response.text();
+
         if (!response.ok) {
             return NextResponse.json(
                 { error: "Failed to fetch thumbnails from Roblox", details: bodyText },
