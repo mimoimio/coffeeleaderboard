@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
             );
         }
 
+        console.log("SUCCESSFULLY FETCH THUMBNAILS")
         return new NextResponse(bodyText, {
             status: 200,
             headers: {
@@ -50,6 +51,7 @@ export async function GET(request: NextRequest) {
             },
         });
     } catch {
+        console.log("FAILED TO FETCH THUMBNAILS")
         return NextResponse.json({ error: "Thumbnail proxy request failed" }, { status: 500 });
     }
 }
