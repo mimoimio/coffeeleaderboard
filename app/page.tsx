@@ -24,6 +24,36 @@ const THUMBNAIL_CACHE_KEY = "roblox-thumbnail-cache-v1";
 const THUMBNAIL_TTL_MS = 24 * 60 * 60 * 1000;
 const THUMBNAIL_BATCH_SIZE = 50;
 
+const getThumbnails = async (userIds: string[]): Promise<Record<string, string>> => {
+  if (userIds.length === 0) return {};
+
+  const roproxyUrl = `https://thumbnails.roproxy.com/v1/users/avatar?userIds=${userIds.join(",")}&size=180x180&format=Png&isCircular=false`;
+
+  try {
+    const res = await fetch(roproxyUrl, {
+      method: "GET",
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      throw new Error("Failed to fetch thumbnails");
+    }
+
+    const data = (await res.json()) as RobloxThumbnailResponse;
+    const thumbnailMap: Record<string, string> = {};
+
+    for (const item of data.data ?? []) {
+      if (!item.imageUrl) continue;
+      thumbnailMap[String(item.targetId)] = item.imageUrl;
+    }
+
+    return thumbnailMap;
+  } catch (fetchError) {
+    console.error("Thumbnail fetch failed:", fetchError);
+    return {};
+  }
+};
+
 const formatDate = (iso: string) => {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "Unknown";
@@ -124,13 +154,9 @@ export default function Home() {
     const fetchMissingThumbnails = async () => {
       for (let i = 0; i < missingUserIds.length; i += THUMBNAIL_BATCH_SIZE) {
         const batch = missingUserIds.slice(i, i + THUMBNAIL_BATCH_SIZE);
-        const url = `/api/roblox-thumbnails?userIds=${batch.join(",")}`;
 
         try {
-          const response = await fetch(url, { cache: "no-store" });
-          if (!response.ok) continue;
-
-          const payload = (await response.json()) as RobloxThumbnailResponse;
+          const thumbnailMap = await getThumbnails(batch);
           const now = Date.now();
 
           if (isCancelled) return;
@@ -138,10 +164,9 @@ export default function Home() {
           setThumbnailCache((current) => {
             const next = { ...current };
 
-            for (const item of payload.data ?? []) {
-              if (item.state !== "Completed" || !item.imageUrl) continue;
-              next[String(item.targetId)] = {
-                imageUrl: item.imageUrl,
+            for (const [userId, imageUrl] of Object.entries(thumbnailMap)) {
+              next[userId] = {
+                imageUrl,
                 cachedAt: now,
               };
             }
@@ -235,11 +260,11 @@ export default function Home() {
   );
 
   return (
-    <main className="relative min-h-screen overflow-x-hidden bg-gradient-to-b from-[#f6e9d7] via-[#f8efe4] to-[#efe1d0] px-4 py-10 text-zinc-900 md:px-8">
+    <main className="relative min-h-screen overflow-x-hidden bg-linear-to-b from-[#f6e9d7] via-[#f8efe4] to-[#efe1d0] px-4 py-10 text-zinc-900 md:px-8">
       <div className="pointer-events-none absolute -left-16 top-10 h-40 w-40 rounded-full bg-[#d97d46]/20 blur-3xl" />
       <div className="pointer-events-none absolute right-0 top-1/3 h-48 w-48 rounded-full bg-[#9f5e3f]/15 blur-3xl" />
 
-      <section className="relative mx-auto w-full max-w-5xl rounded-[2rem] border border-[#d7b38d] bg-[#fff8ef]/90 p-6 shadow-[0_18px_50px_rgba(86,52,31,0.18)] backdrop-blur md:p-8">
+      <section className="relative mx-auto w-full max-w-5xl rounded-4xl border border-[#d7b38d] bg-[#fff8ef]/90 p-6 shadow-[0_18px_50px_rgba(86,52,31,0.18)] backdrop-blur md:p-8">
         <LeaderboardHeader
           isRealtimeConnected={isRealtimeConnected}
           realtimeStatus={realtimeStatus}

@@ -20,7 +20,7 @@ export function LeaderboardTable({
     return (
         <div className="overflow-hidden rounded-2xl border border-[#d9bc9c] bg-[#fffdf9] shadow-[0_8px_24px_rgba(101,62,37,0.1)]">
             <table className="w-full border-separate [border-spacing:0_0.42rem] px-2 text-left text-sm">
-                <thead className="bg-gradient-to-r from-[#6b3f2b] to-[#8c553b] text-[#fff7ef]">
+                <thead className="bg-linear-to-r from-[#6b3f2b] to-[#8c553b] text-[#fff7ef]">
                     <tr>
                         <th className="px-4 py-3">#</th>
                         <th className="px-4 py-3">Username</th>
