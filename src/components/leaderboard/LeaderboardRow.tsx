@@ -64,11 +64,11 @@ export function LeaderboardRow({ row, rank, thumbnailUrl, formatDate }: Leaderbo
                         <img
                             src={thumbnailUrl}
                             alt={`${row.username} avatar`}
-                            className="h-10 w-10 rounded-xl border border-[#d8ba99] object-cover shadow-[0_2px_8px_rgba(86,52,31,0.18)]"
+                            className="h-10 w-10 origin-center rounded-xl border border-[#d8ba99] object-cover shadow-[0_2px_8px_rgba(86,52,31,0.18)] transition-transform duration-300 hover:scale-[3]"
                             loading="lazy"
                         />
                     ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#d8ba99] bg-[#f5e5d2] text-xs font-bold text-[#6f4e3a]">
+                        <div className="flex h-10 w-10 origin-center items-center justify-center rounded-xl border border-[#d8ba99] bg-[#f5e5d2] text-xs font-bold text-[#6f4e3a] transition-transform duration-300 hover:scale-[3]">
                             {row.username.slice(0, 1).toUpperCase() || "?"}
                         </div>
                     )}

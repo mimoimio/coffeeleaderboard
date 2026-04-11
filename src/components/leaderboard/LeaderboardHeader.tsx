@@ -16,18 +16,18 @@ export function LeaderboardHeader({
                     Live Cups Served
                 </p>
                 <h1 className="mt-1 font-serif text-4xl font-semibold tracking-tight text-[#4a2d1f] md:text-5xl">
-                    Cozy Cafe Leaderboard
+                    Coffee Tavern Live Leaderboards
                 </h1>
-                <p className="mt-2 text-sm text-[#6f4f3c]">Freshly synced totals brewed straight from your game servers.</p>
+                {/* <p className="mt-2 text-sm text-[#6f4f3c]">Freshly synced totals brewed straight from your game servers.</p> */}
                 <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-[#dab68e] bg-[#fbeedb] px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-[#7c513a]">
                     <span
                         className={`h-2 w-2 rounded-full ${isRealtimeConnected ? "bg-emerald-500" : "bg-amber-500"}`}
                     />
-                    {isRealtimeConnected ? "Realtime Connected" : "Realtime Waiting"}
+                    {isRealtimeConnected ? "Live" : "Disconnected"}
                 </div>
-                <p className="mt-2 text-[11px] font-medium uppercase tracking-[0.11em] text-[#9a6c4e]">
+                {/* <p className="mt-2 text-[11px] font-medium uppercase tracking-[0.11em] text-[#9a6c4e]">
                     Status: {realtimeStatus}
-                </p>
+                </p> */}
             </div>
 
             <button
